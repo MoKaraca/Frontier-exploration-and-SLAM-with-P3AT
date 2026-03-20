@@ -1,0 +1,324 @@
+// File: src/frontier_explorer.cpp
+// note: issue with recovery is probably the negative sign the angle of which the robot is at could mean its forward or backwards depends
+#include <ros/ros.h>
+#include <nav_msgs/OccupancyGrid.h>
+#include <nav_msgs/Odometry.h>
+#include <geometry_msgs/Twist.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <visualization_msgs/MarkerArray.h>
+#include <visualization_msgs/Marker.h>
+#include <tf/transform_listener.h>
+#include <vector>
+#include <queue>
+#include <cmath>
+
+class FrontierExplorer
+{
+private:
+    ros::NodeHandle nh_;
+    ros::Subscriber map_sub_;
+    ros::Subscriber odom_sub_;
+    ros::Publisher goal_pub_;
+    ros::Publisher cmd_vel_pub_;
+    ros::Publisher markers_pub_;
+    ros::Publisher chosen_frontier_pub_;
+    tf::TransformListener tf_listener_;
+
+    nav_msgs::OccupancyGrid current_map_;
+    nav_msgs::Odometry current_odom_;
+    bool map_received_ = false;
+    bool odom_received_ = false;
+
+    geometry_msgs::Pose last_failed_goal_;
+    bool recovery_in_progress_ = false;
+
+    const double robot_safe_distance_ = 0.5;
+    const double stuck_velocity_threshold_ = 0.2;
+    const double stuck_time_threshold_ = 3.0;
+    const int frontier_min_cluster_size_ = 5;
+    const double min_new_goal_distance_ = 1.5;
+    ros::Time last_moving_time_;
+
+public:
+    FrontierExplorer()
+    {
+        map_sub_ = nh_.subscribe("/map", 1, &FrontierExplorer::mapCallback, this);
+        odom_sub_ = nh_.subscribe("/odom", 1, &FrontierExplorer::odomCallback, this);
+        goal_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 1);
+        cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel", 1);
+        markers_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/frontier_markers", 1);
+        chosen_frontier_pub_ = nh_.advertise<visualization_msgs::Marker>("/chosen_frontier_marker", 1);
+
+        last_moving_time_ = ros::Time::now();
+    }
+
+    void mapCallback(const nav_msgs::OccupancyGrid::ConstPtr& msg)
+    {
+        current_map_ = *msg;
+        map_received_ = true;
+    }
+
+    void odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
+    {
+        current_odom_ = *msg;
+        odom_received_ = true;
+
+        double linear_speed = hypot(msg->twist.twist.linear.x, msg->twist.twist.linear.y);
+        if (linear_speed > stuck_velocity_threshold_)
+        {
+            last_moving_time_ = ros::Time::now();
+        }
+    }
+
+  void spin()
+{
+    ros::Rate rate(1.0);
+
+    while (ros::ok())
+    {
+        ros::spinOnce();
+
+        if (!map_received_)
+        {
+            rate.sleep();
+            continue;
+        }
+
+        if (isRobotStuck())
+        {
+            performRecovery();
+        }
+
+        geometry_msgs::PoseStamped best_frontier;
+        if (findBestFrontier(best_frontier))
+        {
+            goal_pub_.publish(best_frontier);
+        }
+
+        rate.sleep();
+    }
+}
+
+
+private:
+    bool isRobotStuck()
+    {
+        return (ros::Time::now() - last_moving_time_).toSec() > stuck_time_threshold_;
+    }
+
+    void performRecovery()
+    {
+        ROS_WARN("Robot stuck! Performing robust recovery maneuver...");
+        geometry_msgs::Twist reverse_cmd;
+        reverse_cmd.linear.x = -1.3;
+
+        ros::Time start = ros::Time::now();
+        ros::Rate r(10);
+        while ((ros::Time::now() - start).toSec() < 2.0)
+        {
+            cmd_vel_pub_.publish(reverse_cmd);
+            r.sleep();
+        }
+
+        geometry_msgs::Twist stop_cmd;
+        cmd_vel_pub_.publish(stop_cmd);
+
+        last_failed_goal_.position = current_odom_.pose.pose.position;
+        recovery_in_progress_ = true;
+        last_moving_time_ = ros::Time::now();
+    }
+
+    bool findBestFrontier(geometry_msgs::PoseStamped& goal)
+    {
+        std::vector<std::pair<int, int>> frontiers;
+        const auto& map = current_map_;
+
+        int width = map.info.width;
+        int height = map.info.height;
+
+        for (int y = 1; y < height - 1; ++y)
+        {
+            for (int x = 1; x < width - 1; ++x)
+            {
+                int index = x + y * width;
+                if (map.data[index] == 0 && isFrontier(x, y))
+                {
+                    frontiers.emplace_back(x, y);
+                }
+            }
+        }
+
+        if (frontiers.empty())
+            return false;
+
+        publishFrontierMarkers(frontiers);
+
+        geometry_msgs::Pose robot_pose;
+        if (!getRobotPose(robot_pose))
+            return false;
+
+        double min_dist = std::numeric_limits<double>::max();
+        std::pair<int, int> best_point;
+
+        for (const auto& pt : frontiers)
+        {
+            double wx = map.info.origin.position.x + pt.first * map.info.resolution;
+            double wy = map.info.origin.position.y + pt.second * map.info.resolution;
+
+            if (isNearObstacle(pt.first, pt.second))
+                continue;
+
+            if (recovery_in_progress_)
+            {
+                double fail_dist = hypot(wx - last_failed_goal_.position.x, wy - last_failed_goal_.position.y);
+                if (fail_dist < min_new_goal_distance_)
+                    continue;
+            }
+
+            double dist = hypot(wx - robot_pose.position.x, wy - robot_pose.position.y);
+            if (dist < min_dist)
+            {
+                min_dist = dist;
+                best_point = pt;
+            }
+        }
+
+        if (min_dist == std::numeric_limits<double>::max())
+            return false;
+
+        goal.header.frame_id = "map";
+        goal.header.stamp = ros::Time::now();
+        goal.pose.position.x = map.info.origin.position.x + best_point.first * map.info.resolution;
+        goal.pose.position.y = map.info.origin.position.y + best_point.second * map.info.resolution;
+        goal.pose.orientation.w = 1.0;
+
+        recovery_in_progress_ = false;
+
+        return true;
+    }
+
+    void publishFrontierMarkers(const std::vector<std::pair<int, int>>& frontiers)
+    {
+        visualization_msgs::MarkerArray markers;
+        int id = 0;
+
+        for (const auto& pt : frontiers)
+        {
+            visualization_msgs::Marker marker;
+            marker.header.frame_id = "map";
+            marker.header.stamp = ros::Time::now();
+            marker.ns = "frontiers";
+            marker.id = id++;
+            marker.type = visualization_msgs::Marker::SPHERE;
+            marker.action = visualization_msgs::Marker::ADD;
+            marker.scale.x = 0.1;
+            marker.scale.y = 0.1;
+            marker.scale.z = 0.1;
+            marker.color.a = 1.0;
+            marker.color.r = 0.0;
+            marker.color.g = 1.0;
+            marker.color.b = 0.0;
+            marker.pose.position.x = current_map_.info.origin.position.x + pt.first * current_map_.info.resolution;
+            marker.pose.position.y = current_map_.info.origin.position.y + pt.second * current_map_.info.resolution;
+            marker.pose.position.z = 0.0;
+            markers.markers.push_back(marker);
+        }
+
+        markers_pub_.publish(markers);
+    }
+
+    void publishChosenFrontierMarker(const geometry_msgs::PoseStamped& goal)
+    {
+        visualization_msgs::Marker chosen;
+        chosen.header.frame_id = "map";
+        chosen.header.stamp = ros::Time::now();
+        chosen.ns = "chosen_frontier";
+        chosen.id = 0;
+        chosen.type = visualization_msgs::Marker::SPHERE;
+        chosen.action = visualization_msgs::Marker::ADD;
+        chosen.scale.x = 0.3;
+        chosen.scale.y = 0.3;
+        chosen.scale.z = 0.3;
+        chosen.color.a = 1.0;
+        chosen.color.r = 1.0;
+        chosen.color.g = 0.0;
+        chosen.color.b = 0.0;
+        chosen.pose = goal.pose;
+
+        chosen_frontier_pub_.publish(chosen);
+    }
+
+    bool isFrontier(int x, int y)
+    {
+        const auto& map = current_map_;
+        int width = map.info.width;
+
+        int unknown_neighbors = 0;
+        for (int dy = -1; dy <= 1; ++dy)
+        {
+            for (int dx = -1; dx <= 1; ++dx)
+            {
+                int nx = x + dx;
+                int ny = y + dy;
+                int nidx = nx + ny * width;
+
+                if (map.data[nidx] == -1)
+                    unknown_neighbors++;
+            }
+        }
+        return unknown_neighbors >= frontier_min_cluster_size_;
+    }
+
+    bool isNearObstacle(int x, int y)
+    {
+        const auto& map = current_map_;
+        int radius_cells = static_cast<int>(robot_safe_distance_ / map.info.resolution);
+
+        for (int dy = -radius_cells; dy <= radius_cells; ++dy)
+        {
+            for (int dx = -radius_cells; dx <= radius_cells; ++dx)
+            {
+                int nx = x + dx;
+                int ny = y + dy;
+
+                if (nx < 0 || ny < 0 || nx >= (int)map.info.width || ny >= (int)map.info.height)
+                    continue;
+
+                int nidx = nx + ny * map.info.width;
+                if (map.data[nidx] > 50)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    bool getRobotPose(geometry_msgs::Pose& pose)
+    {
+        tf::StampedTransform transform;
+        try
+        {
+            tf_listener_.lookupTransform("map", "base_link", ros::Time(0), transform);
+        }
+        catch (tf::TransformException& ex)
+        {
+            ROS_WARN("TF lookup failed: %s", ex.what());
+            return false;
+        }
+
+        pose.position.x = transform.getOrigin().x();
+        pose.position.y = transform.getOrigin().y();
+        pose.orientation.w = 1.0;
+        return true;
+    }
+};
+
+int main(int argc, char** argv)
+{
+    ros::init(argc, argv, "frontier_explorer");
+
+    FrontierExplorer explorer;
+    explorer.spin();
+
+    return 0;
+}
+

@@ -1,0 +1,162 @@
+#include <ros/ros.h>
+#include <image_transport/image_transport.h>
+#include <cv_bridge/cv_bridge.h>
+#include <sensor_msgs/image_encodings.h>
+#include <opencv2/opencv.hpp>
+#include <visualization_msgs/Marker.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <mutex>
+#include <thread>
+
+const cv::Scalar PURPLEISH_LOWER(145, 60, 130), PURPLEISH_UPPER(170, 90, 160);
+const cv::Scalar GREENISH_LOWER(8, 175, 83), GREENISH_UPPER(24, 205, 115);
+const cv::Scalar NEW_COLOR_LOWER(3, 90, 125), NEW_COLOR_UPPER(18, 130, 180);
+
+const int MIN_BARREL_PIXELS = 1500;
+
+ros::Publisher marker_pub;
+tf2_ros::Buffer tf_buffer;
+std::unique_ptr<tf2_ros::TransformListener> tf_listener;
+
+std::mutex marker_mutex;
+bool suppression_active = false;
+
+void publishMarkerInFront(const std::string& label, int id) {
+    std::lock_guard<std::mutex> lock(marker_mutex);
+    if (suppression_active) {
+        ROS_INFO("Marker suppressed due to cooldown.");
+        return;
+    }
+
+    suppression_active = true;
+    std::thread([label, id]() {
+        ros::Duration(9.0).sleep();
+        if (!ros::ok()) return;
+
+        geometry_msgs::TransformStamped tf;
+        try {
+            tf = tf_buffer.lookupTransform("map", "p3at/base_link", ros::Time(0), ros::Duration(1.0));
+        } catch (tf2::TransformException& ex) {
+            ROS_WARN("TF2 error: %s", ex.what());
+            suppression_active = false;
+            return;
+        }
+
+        tf2::Quaternion q(tf.transform.rotation.x, tf.transform.rotation.y,
+                          tf.transform.rotation.z, tf.transform.rotation.w);
+        tf2::Vector3 forward(0.7, 0.0, 0.0);
+        tf2::Matrix3x3 m(q);
+        tf2::Vector3 rotated = m * forward;
+
+        geometry_msgs::Point position;
+        position.x = tf.transform.translation.x + rotated.x();
+        position.y = tf.transform.translation.y + rotated.y();
+        position.z = 0.0;
+
+        visualization_msgs::Marker marker;
+        marker.header.frame_id = "map";
+        marker.header.stamp = ros::Time::now();
+        marker.ns = "barrel_markers";
+        marker.id = id;
+        marker.type = visualization_msgs::Marker::SPHERE;
+        marker.action = visualization_msgs::Marker::ADD;
+        marker.pose.position = position;
+        marker.pose.orientation.w = 1.0;
+        marker.scale.x = 0.3;
+        marker.scale.y = 0.3;
+        marker.scale.z = 0.3;
+        marker.color.a = 1.0;
+
+        std_msgs::ColorRGBA color;
+        color.a = 1.0;
+        if (label.find("Purple") != std::string::npos) {
+            color.r = 1.0; color.g = 0.0; color.b = 1.0;
+        } else if (label.find("Green") != std::string::npos) {
+            color.r = 0.0; color.g = 1.0; color.b = 0.0;
+        } else {
+            color.r = 1.0; color.g = 0.5; color.b = 0.0;
+        }
+        marker.color = color;
+
+        marker_pub.publish(marker);
+        ROS_INFO("Published marker for: %s", label.c_str());
+
+        ros::Duration(4.0).sleep();
+        suppression_active = false;
+    }).detach();
+}
+
+void detectBarrels(const cv::Mat& hsv, const cv::Mat& bgr) {
+    cv::Mat mask1, mask2, mask3;
+    cv::inRange(hsv, PURPLEISH_LOWER, PURPLEISH_UPPER, mask1);
+    cv::inRange(hsv, GREENISH_LOWER, GREENISH_UPPER, mask2);
+    cv::inRange(hsv, NEW_COLOR_LOWER, NEW_COLOR_UPPER, mask3);
+    cv::Mat combined_mask = mask1 | mask2 | mask3;
+
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(combined_mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+    for (const auto& c : contours) {
+        if (cv::contourArea(c) < MIN_BARREL_PIXELS) continue;
+
+        cv::Rect rect = cv::boundingRect(c);
+        cv::Mat roi_hsv = hsv(rect);
+
+        cv::Mat purple_mask, green_mask, new_color_mask;
+        cv::inRange(roi_hsv, PURPLEISH_LOWER, PURPLEISH_UPPER, purple_mask);
+        cv::inRange(roi_hsv, GREENISH_LOWER, GREENISH_UPPER, green_mask);
+        cv::inRange(roi_hsv, NEW_COLOR_LOWER, NEW_COLOR_UPPER, new_color_mask);
+
+        int purple = cv::countNonZero(purple_mask);
+        int green = cv::countNonZero(green_mask);
+        int new_color = cv::countNonZero(new_color_mask);
+
+        std::string label;
+        if (purple > green && purple > new_color)
+            label = "Purple Barrel";
+        else if (green > purple && green > new_color)
+            label = "Green Barrel";
+        else
+            label = "New Color Barrel";
+
+        cv::rectangle(bgr, rect, cv::Scalar(0, 255, 255), 2);
+        cv::putText(bgr, label, rect.tl(), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255,255,255), 1);
+
+        static int marker_id = 0;
+        publishMarkerInFront(label, marker_id++);
+        break;
+    }
+}
+
+void imageCallback(const sensor_msgs::ImageConstPtr& msg) {
+    try {
+        auto cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);
+        cv::Mat bgr = cv_ptr->image;
+        cv::Mat hsv;
+        cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
+
+        detectBarrels(hsv, bgr);
+
+        cv::imshow("Detection", bgr);
+        cv::waitKey(1);
+    } catch (cv_bridge::Exception& e) {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+    }
+}
+
+int main(int argc, char** argv) {
+    ros::init(argc, argv, "barrel_detector");
+    ros::NodeHandle nh;
+
+    image_transport::ImageTransport it(nh);
+    image_transport::Subscriber sub = it.subscribe("/p3at/camera/rgb/image_raw", 1, imageCallback);
+
+    marker_pub = nh.advertise<visualization_msgs::Marker>("visualization_marker", 10);
+    tf_listener = std::make_unique<tf2_ros::TransformListener>(tf_buffer);
+
+    cv::namedWindow("Detection", cv::WINDOW_NORMAL);
+    ros::spin();
+    return 0;
+}
+

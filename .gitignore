@@ -1,0 +1,92 @@
+# ROS/Catkin Build Artifacts
+build/
+devel/
+install/
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# IDE and Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Qt Creator
+CMakeLists.txt.user
+
+# Python
+.env
+venv/
+env/
+*.egg
+
+# ROS Specific
+*.bag
+*.dae.zip
+*.blend1
+.catkin_tools/
+
+# Build outputs
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+
+# Temporary files
+*.tmp
+*.bak
+*.log
+
+# Platform specific
+Thumbs.db
+.directory
+
+# Gazebo Simulation
+.gazebo/
+gazebo_models/
+
+# Media and resources (optional - uncomment if you want to exclude)
+# Media/
+# meshes/
+# textures/
+
+# Large archived files
+*.zip
+*.tar.gz
+*.tar.bz2
+hazmats.zip
+RC2012Pre1.dae.zip
+
+# Node modules (if using Node.js)
+node_modules/
+package-lock.json
+
+# Do NOT ignore important source files
+!*.cpp
+!*.py
+!*.xml
+!*.yaml
+!*.urdf
+!*.xacro
+!*.launch
+!*.h
+!*.hpp
+!*.dae
+!*.png
+!*.jpg
+!*.jpeg
+!*.sdf
+!*.md
