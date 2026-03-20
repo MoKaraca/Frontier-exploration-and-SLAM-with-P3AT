@@ -1,6 +1,6 @@
-# Catkin Workspace - ROS Robot Exploration and Navigation System
-
-This is a ROS (Robot Operating System) catkin workspace containing autonomous robot navigation, exploration, and object detection systems. The workspace is designed for simulating and controlling Pioneer3-AT robots in Gazebo environments for NIST-style arena challenges.
+# ROS Robot Exploration and Navigation System
+# Note: The project isnt finallized so some parts of the project might be incomplete
+This is a ROS catkin workspace containing autonomous robot navigation, exploration, and object detection systems. The workspace is designed for simulating and controlling the Pioneer3-AT robot in Gazebo classic with 
 
 ## Table of Contents
 - [Overview](#overview)
@@ -20,11 +20,8 @@ This workspace provides a complete ROS-based system for autonomous robots that c
 - **Autonomously explore** unknown environments using frontier-based exploration
 - **Navigate safely** using move_base with local/global costmaps
 - **Detect objects** including colored barrels, hazmat signs, and QR codes
-- **Process images** in real-time from robot cameras
-- **Provide teleoperation** via keyboard control
-- **Simulate** robot scenarios in NIST arena environments using Gazebo
 
-The primary focus is the `odev2` package, which demonstrates advanced autonomous navigation and perception capabilities for the Pioneer3-AT robot platform.
+The primary focus is the `odev2` package, 
 
 ---
 
@@ -38,85 +35,40 @@ catkin_ws/src/
 │   ├── hector_nist_arena_designer/
 │   ├── hector_nist_arena_elements/
 │   └── hector_nist_arena_worlds/
-└── newModels/                          # Additional 3D models for Gazebo
-```
+└── newModels/                         
 
 ---
 
 ## Key Components
 
 ### 1. **Exploration Module** (`explore.cpp`)
-- **Frontier-based autonomous exploration** algorithm
-- A* pathfinding for optimal path planning
-- Dynamically identifies and navigates to frontier cells (boundaries of explored/unexplored regions)
-- Configurable frontier size thresholds and information radius
-- Real-time visualization of frontier markers and planned paths
-- Integration with move_base for goal execution
-
-**Features:**
-- Automatic termination when exploration is complete
-- Marker-based visualization in RViz
-- Planner frequency control (default: 1.0 Hz)
+- **Frontier-based autonomous exploration** algorithm A* pathfinding for optimal path planning
 
 ### 2. **Object Detection Modules**
 
 #### **Barrel Detector** (`object_detector.cpp`)
 - HSV-based color filtering for barrel detection
-- Supports multiple barrel colors (purpleish, light greenish, custom)
-- Minimum pixel threshold filtering to reduce false positives
-- Real-time bounding box and label visualization
-- Uses OpenCV contour detection and analysis
 
 #### **Hazmat Sign Detector** (`hazmat_detector.cpp`)
 - AKAZE feature matching for hazmat sign recognition
-- Supports 15+ hazmat classifications:
-  - Blasting Agents, Inhalation Hazard, Corrosive
-  - Flammable Gas/Solid, Dangerous When Wet
-  - Organic Peroxide, Explosives, Oxidizer
-  - Oxygen, Poison, Fuel-Oil, Radioactive, etc.
-- Template-based image matching approach
-- Real-time processing from camera feed
 
-#### **QR Code Detector** (`qr_detector.cpp` & `qr.py`)
-- Dual implementation: C++ (OpenCV) and Python (pyzbar)
-- QR code detection and decoding
-- 2D position mapping to map frame coordinate system
-- RViz marker visualization of detected QR codes
-- TF-based coordinate transformation for localization
+
+#### **QR Code Detector** (`qr.py`)
+
+- QR code detection and decoding, RViz marker visualization of detected QR codes (needs to be manually added in Rviz through the add topic section)
 
 ### 3. **Control & Navigation**
 
 #### **Keyboard Teleoperation** (`keyboard.py`)
-- Real-time keyboard control of robot velocity
-- WASD-style and arrow-key movement patterns
-- Holonomic mode for strafing (shift key)
-- Dynamic speed adjustment (±10% increments)
-- Angular velocity control for rotation
-
-#### **Navigation Stack Integration**
-- Move_base action client for autonomous navigation
-- Local and global costmap configuration
-- Dynamic Window Approach (DWA) planner
-- Obstacle avoidance using laser scans
-
-### 4. **Environment Assets**
-- **Arena Design Tools** (`hector_nist_arena_designer`)
-- **Pre-built Arena Elements** (100+ models including):
-  - Ramps (full, half, elevated, shifted)
-  - Floor tiles (black, white, with detection lines)
-  - Obstacles (walls, corners)
-  - Hazmat sign textures
-  - Barrels and containers
-- **World Files** for NIST-compatible scenarios
-
+- Real-time keyboard control of robot velocity (WASD-style and arrow-key movement patterns)
 ---
 
 ## Installation & Setup
 
 ### Prerequisites
-- Ubuntu 20.04 (ROS Noetic) or compatible
+- Ubuntu 20.04 (ROS Noetic)
 - ROS installed: `http://wiki.ros.org/noetic/Installation`
-- Gazebo 11+ (installed with ROS)
+- Gazebo 11+ 
 - OpenCV 4.x
 - Python 3.8+
 
@@ -145,32 +97,23 @@ sudo apt-get install ros-noetic-gazebo-ros ros-noetic-gazebo-ros-control \
 ```bash
 mkdir -p ~/catkin_ws/src
 cd ~/catkin_ws
-git clone <repository-url> src/
+git clone https://github.com/MoKaraca/Frontier-exploration-and-SLAM-with-P3AT.git src/
 
-# Create workspace if not exists
-source /opt/ros/noetic/setup.bash
+# Source workspace 
+echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc
+echo "source ~/catkin_ws/devel/setup.bash" >> ~/.bashrc
+source ~/.bashrc
 ```
 
 ---
 
 ## Building
 
-### Option 1: Build Entire Workspace
+### Build Entire Workspace
 ```bash
 cd ~/catkin_ws
 catkin_make
 source devel/setup.bash
-```
-
-### Option 2: Build Specific Packages
-```bash
-catkin_make --pkg odev2
-catkin_make --pkg pioneer3at_demo
-```
-
-### Verify Build
-```bash
-rospack list | grep odev2
 ```
 
 ---
@@ -206,24 +149,6 @@ rosrun odev2 qr.py
 ```bash
 # Terminal: Manual control
 rosrun odev2 keyboard.py
-```
-
-### 4. Visualization
-
-```bash
-# Terminal: Launch RViz
-rviz -d $(rospack find odev2)/rviz/odev2.rviz
-```
-
-### 5. Monitor Topics
-
-```bash
-# List all topics
-rostopic list
-
-# Echo exploration status
-rostopic echo /frontier_markers
-rostopic echo /detected_qr_codes
 ```
 
 ---
@@ -288,21 +213,21 @@ rostopic echo /detected_qr_codes
 
 ### Core ROS Packages
 ```
-- roscpp, rospy (ROS C++/Python client libraries)
-- std_msgs, sensor_msgs, geometry_msgs (message types)
-- nav_msgs (navigation data structures)
-- tf, tf2, tf2_ros (coordinate transformations)
-- actionlib (action-based communication)
-- move_base_msgs (navigation actions)
-- visualization_msgs (RViz markers)
-- image_transport, cv_bridge (camera communication)
+- roscpp, rospy 
+- std_msgs, sensor_msgs, geometry_msgs
+- nav_msgs 
+- tf, tf2, tf2_ros 
+- actionlib 
+- move_base_msgs 
+- visualization_msgs 
+- image_transport, cv_bridge 
 ```
 
 ### External Libraries
 ```
-- OpenCV 4.x (computer vision)
+- OpenCV 4.x 
 - pyzbar (Python QR code library)
-- Gazebo 11+ (robot simulation)
+- Gazebo 11+ 
 ```
 
 ---
@@ -338,53 +263,11 @@ roslaunch odev2 exploration.launch verbose:=true
 roslaunch odev2 exploration.launch gui:=true
 ```
 
-### Monitor Robot Performance
-```bash
-# Check TF tree
-rosrun tf view_frames
-evince frames.pdf
-
-# Verify laser scans
-rostopic echo /p3at/scan
-
-# Monitor exploration status
-rosnode list
-rosnode info /explore_node
-```
-
-### Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| "Waiting for move_base action server" | Ensure move_base is running: `roslaunch move_base move_base.launch` |
-| No camera images | Verify camera plugin in URDF: `rostopic echo /p3at/camera/rgb/image_raw` |
-| Exploration stuck | Check costmap inflation radius and obstacle detection |
-| QR detection not working | Ensure pyzbar installed: `pip3 install pyzbar` |
-
----
-
-## License
-
-MIT License - See individual package.xml files for details
-
----
-
-## Authors & Contributors
+## Contributors
 
 - **Dr. Furkan CAKMAK** - Project Lead (Yildiz Technical University)
 - **Yildiz Robotics Team** - Pioneer3-AT simulation base
-- **Contributors** - Arena environments and detection algorithms
 
----
-
-## Contact & Support
-
-For issues or questions:
-- Email: fcakmak@yildiz.edu.tr
-- Workspace: Ubuntu 20.04 LTS
-- ROS Distribution: Noetic Ninjemys
-
----
 
 ## References
 
@@ -395,4 +278,4 @@ For issues or questions:
 
 ---
 
-*Last Updated: March 2026*
+
