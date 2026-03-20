@@ -1,6 +1,6 @@
 # ROS Robot Exploration and Navigation System
 # Note: The project isnt finallized so some parts of the project might be incomplete
-This is a ROS catkin workspace containing autonomous robot navigation, exploration, and object detection systems. The workspace is designed for simulating and controlling the Pioneer3-AT robot in Gazebo classic with 
+This is a ROS catkin workspace containing autonomous robot navigation, exploration, and object detection systems. The workspace is designed for simulating and controlling the Pioneer3-AT robot in Gazebo classic and ROS Noetic
 
 ## Table of Contents
 - [Overview](#overview)
