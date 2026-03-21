@@ -25,6 +25,12 @@ The primary focus is the `odev2` package,
 
 ---
 
+## Demo Video
+
+<video src="0321.mp4" width="640" height="480" controls autoplay loop muted></video>
+
+---
+
 ## Project Structure
 
 ```
